@@ -54,28 +54,61 @@ var
 
 // Constructor
 function Climate (hardware) {
-  this.hardware = hardware;
-  this.csn = 1;
-  this._configReg = 0;
+  var self = this;
+
+  self.hardware = hardware;
+  self.csn = 1;
+  self._configReg = 0;
+
+  self.units = 'f'; // 'c' for centigrade
+  self.pollPeriod = 500; // in ms
+  self.numListeners = 0;
+  self.listeningLoop = null;
 
   // I2C object for address
-  this.i2c = this.hardware.I2C(I2C_ADDRESS);
+  self.i2c = this.hardware.I2C(I2C_ADDRESS);
 
-  this.hardware.digital[this.csn].write(0);
-
-  var self = this;
+  self.hardware.digital[this.csn].write(0);
 
   setTimeout(function () {
     self._readRegister(REG_ID, function ok (err, reg) {
       var id = reg & ID_SAMPLE;
       if (id != ID_SI7005) {
         self.emit('error', new Error('Cannot connect to climate sensor. Got id: ' + id.toString(16)));
-      }
-      else {
+      } else {
         self.emit('ready');
       }
     });
   }, WAKE_UP_TIME);
+
+    // If we get a new listener
+  self.on('newListener', function (event) {
+    if (event == 'temperature' || event == 'humidity') {
+      // Add to the number of things listening
+      self.numListeners += 1;
+      // If we're not already listening
+      if (!self.listeningLoop) {
+        // Start listening
+        self._startListening();
+      }
+    }
+  });
+
+  // If we remove a listener
+  self.on('removeListener', function (event) {
+    if (event == 'temperature' || event == 'humidity') {
+      // Remove from the number of things listening
+      self.numListeners -= 1;
+    }
+  });
+
+  self.on('removeAllListeners', function () {
+    self.numListeners = 0;
+    self.listeningLoop = null;
+  });
+  if (callback) {
+    callback(null, self);
+  }
 }
 
 util.inherits(Climate, events.EventEmitter);
@@ -94,6 +127,52 @@ Climate.prototype._readRegister = function (addressToRead, callback) {
       callback(err, ret && ret[0]);
     }
   });
+};
+
+Climate.prototype._startListening = function (callback) {
+  //  Configure the module to automatically emit data
+  var self = this;
+  // Loop until nothing is listening
+  self.listeningLoop = setInterval(function () {
+    if (self.numListeners) {
+      self.readHumidity(function (err, humidity) {
+        if (err) {
+          self.emit('error', err);
+          if (callback) {
+            callback(err);
+          }
+        }
+        self.emit('humidity', humidity);
+      });
+      self.readTemperature(self.units, function (err, temperature) {
+        if (err) {
+          self.emit('error', err);
+          if (callback) {
+            callback(err);
+          }
+        }
+        self.emit('temperature', temperature);
+      });
+    } else {
+      if (callback) {
+        self._stopListening(callback);
+      } else {
+        self._stopListening();
+      }
+    }
+  }, self.pollPeriod);
+  if (callback) {
+    callback();
+  }
+};
+
+Climate.prototype._stopListening = function (callback) {
+  var self = this;
+  clearInterval(self.listeningLoop);
+  self.listeningLoop = null;
+  if (callback) {
+    callback();
+  }
 };
 
 // Write to registers on the PCA9685 via I2C
@@ -157,6 +236,11 @@ Climate.prototype.readHumidity = function (callback) {
   */
   var self = this;
   this.getData(CONFIG_HUMIDITY, function (err, reg) {
+    if (err) {
+      if (callback) {
+        callback(err);
+      }
+    }
     var rawHumidity = reg >> 4;
     var curve = ( rawHumidity / HUMIDITY_SLOPE ) - HUMIDITY_OFFSET;
     var linearHumidity = curve - ( (curve * curve) * a2 + curve * a1 + a0);
@@ -249,6 +333,16 @@ Climate.prototype.setFastMeasure = function  (status, callback) {
   if (callback) {
     callback();
   }
+};
+
+// Takes poll period in ms, sets, restarts polling loop
+Climate.prototype.setPollPeriod = function (time, callback) {
+
+};
+
+// Takes units as a string, sets them, restarts polling loop
+Climate.prototype.setUnits = function (units, callback) {
+
 };
 
 function use (hardware, csn) {

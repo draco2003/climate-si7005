@@ -11,14 +11,11 @@ var climate = require('../').use(tessel.port['A']); // Replace '../' with 'clima
 
 // Wait for the climate module to connect
 climate.on('ready', function () {
-  // Loop forever
-  setImmediate(function loop () {
-    climate.readTemperature('f', function (err, temp) {
-      climate.readHumidity(function (err, humid) {
-        console.log('Degrees:', temp.toFixed(4) + 'F', 'Humidity:', humid.toFixed(4) + '%RH');
-        setTimeout(loop, 300);
-      });
-    });
+  climate.on('temperature', function (temp) {
+    console.log(temp.toFixed(2), 'degrees F');
+  });
+  climate.on('humidity', function (humidity) {
+    console.log(humidity.toFixed(2), '%RH');
   });
 });
 
